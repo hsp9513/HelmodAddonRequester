@@ -31,16 +31,59 @@ local util = require("util")
 --end
 
 function reset()
-    --for _,player in pairs(game.players) do
-    --    local item_requester = player.gui.left.item_requester
-    --    if item_requester then item_requester.destroy() end
-    --end
-    --global.settings=nil
+    global.request_proxy={}
+    global.meta={}
 end
 
 function error_message(message)
     game.print{"","[",{"mod-name.HelmodAddonRequester"}," ",script.active_mods.HelmodAddonRequester,"] ",{"helmod-addon-requester.error_message"}}
     game.print(message)
+end
+
+function update_proxy_list(player) 
+    local player_index=player.index
+    if global.request_proxy[player_index]==nil then
+        global.request_proxy[player_index]= {}
+    end
+    for unit_number,proxy in pairs(global.request_proxy[player_index]) do
+        if not proxy or not proxy.valid then 
+            global.request_proxy[player_index][unit_number]=nil
+        end
+    end
+end
+
+function add_proxy(player, proxy) 
+    local player_index=player.index
+    if global.request_proxy[player_index]==nil then
+        global.request_proxy[player_index]= {}
+    end
+    global.request_proxy[player_index][proxy.unit_number]=proxy
+    --game.print("add_proxy"..proxy.unit_number)
+    --game.print("#proxy_list"..#global.request_proxy[player_index])
+end
+
+function get_proxy_list(player) 
+    local player_index=player.index
+    if global.request_proxy[player_index]==nil then
+        global.request_proxy[player_index]= {}
+    end
+    return global.request_proxy[player_index]
+end
+
+function set_meta(player, attr, data) 
+    local player_index=player.index
+    if global.meta[player_index]==nil then
+        global.meta[player_index]= {}
+    end
+    global.meta[player_index][attr] = data
+end
+
+function get_meta(player, attr) 
+    local player_index=player.index
+    if global.meta[player_index]==nil then
+        global.meta[player_index]= {}
+    end
+    return global.meta[player_index][attr]
 end
 
 function get_summary_from_player(player) 
@@ -53,10 +96,22 @@ function get_summary_from_player(player)
         local tables = scroll_panel[table_name]
         for _, item in pairs(tables.children) do
             local item_name = string.sub(item.row1.children[1].sprite,6) -- sprite = "item/bulah-bulah"
+
+            local item_name
+            local sprite_name = util.split(item.row1.children[1].sprite, "/")
+            if sprite_name[1] == "item" then
+                item_name = sprite_name[2]
+            elseif sprite_name[1] == "entity" then
+                item_name = game.entity_prototypes[sprite_name[2]].mineable_properties.products[1].name 
+            end
+
             local count = tonumber(item.row3.children[1].caption)
             if count~=0 then
                 --table.insert(summary, {item_name=item_name, count=count})
-                summary[item_name] = count
+                if summary[item_name] == nil then
+                    summary[item_name] = 0
+                end
+                summary[item_name] = summary[item_name] + count
             end
         end
     end
@@ -123,11 +178,14 @@ function update_gui(player)
     for item_name,count in pairs(summary) do
         --local item_name = item.item_name
         --local count = item.count
+        local item_prototype = game.item_prototypes[item_name]
         local missing_count = math.max(count-player.get_item_count(item_name), 0)
         --table.insert(every_caption  , "\n[img=item/"..item_name.."] "..tostring(count))
         --table.insert(missing_caption, "\n[img=item/"..item_name.."] "..tostring(missing_count))
-        every_label_flow  .add{type="label", caption="[img=item/"..item_name.."] "..tostring(count)        ,tooltip={"?",{"entity-name."..item_name},{"item-name."..item_name}}}
-        missing_label_flow.add{type="label", caption="[img=item/"..item_name.."] "..tostring(missing_count),tooltip={"?",{"entity-name."..item_name},{"item-name."..item_name}}}
+        --every_label_flow  .add{type="label", caption="[img=item/"..item_name.."] "..tostring(count)        ,tooltip={"?",{"entity-name."..item_name},{"item-name."..item_name}}}
+        --missing_label_flow.add{type="label", caption="[img=item/"..item_name.."] "..tostring(missing_count),tooltip={"?",{"entity-name."..item_name},{"item-name."..item_name}}}
+        every_label_flow  .add{type="label", caption="[img=item/"..item_name.."] "..tostring(count)        ,tooltip=item_prototype.localised_name}
+        missing_label_flow.add{type="label", caption="[img=item/"..item_name.."] "..tostring(missing_count),tooltip=item_prototype.localised_name}
         if missing_count~=0 then
             --table.insert(missing_summary, {item_name=item_name, count=missing_count})
             missing_summary[item_name]=missing_count
@@ -154,17 +212,29 @@ function request_for_player(event)
     local player_index = event.player_index
     local player = game.players[player_index]
     local element = event.element
+    local character = player.character
+
+    if character == nil then
+        player.print{"helmod-addon-requester.no_character"}
+        return
+    end
 
     --game.print("request_for_player")
     --game.print(game.table_to_json(element.parent.tags.summary))
     if element.parent.tags.count ~= 0 then
-        player.surface.create_entity{
+        if character.allow_dispatching_robots then
+            --player.print{"helmod-addon-requester.disallow_dispatch"}
+            character.allow_dispatching_robots = false
+            set_meta(player, "restore_dispatch", true)
+        end
+        local proxy = player.surface.create_entity{
             name="item-request-proxy",
             position=player.position,
             force=player.force,
-            target=player.character,
+            target=character,
             modules=element.parent.tags.summary
         }
+        add_proxy(player, proxy)
     else
         player.print{"helmod-addon-requester.no_request"}
     end
@@ -226,7 +296,7 @@ function on_gui_click(event)
     local success,message = pcall(function ()
         --game.print("00")
         local element=event.element
-        --game.print("11")
+        --game.print("11"
         if string.sub(element.name,1,2)~= "HM" then 
             return 
         end
@@ -262,11 +332,24 @@ function on_player_main_inventory_changed(event)
         local player = game.players[player_index]
 
         local HMSummaryPanel = player.gui.screen.HMSummaryPanel
-        if not HMSummaryPanel then return end
-        
-        update_gui(player)
+        if HMSummaryPanel then 
+            update_gui(player)
+        end
 
-
+        update_proxy_list(player)
+        if get_meta(player,"restore_dispatch")==true then
+            local proxy_list = get_proxy_list(player)
+            local proxy_cnt = 0
+            for k,v in pairs(proxy_list) do
+                proxy_cnt = proxy_cnt + 1
+            end
+            if proxy_cnt==0 then
+                if player.character then
+                    player.character.allow_dispatching_robots = true
+                end
+                set_meta(player,"restore_dispatch", false)
+            end
+        end
 
     end)
     if not success then
@@ -276,6 +359,14 @@ function on_player_main_inventory_changed(event)
 end
 script.on_event(defines.events.on_player_main_inventory_changed   ,on_player_main_inventory_changed   )
 
+function on_configuration_changed()
+    reset()
+end
+function on_init()
+    reset()
+end
+script.on_init                 (on_init                 )
+script.on_configuration_changed(on_configuration_changed)
 
     --return game.table_to_json(summary)
 --script.on_event(defines.events.on_robot_built_entity   ,on_robot_built_entity   )
@@ -296,3 +387,5 @@ script.on_event(defines.events.on_player_main_inventory_changed   ,on_player_mai
 --script.on_event(defines.events.on_marked_for_upgrade        , on_marked_for_upgrade       ) -- {entity, target, player_index, direction, name, tick}
 
 --script.on_event(defines.events.on_tick   ,on_tick   )
+
+if script.active_mods["gvv"] then require("__gvv__.gvv")() end

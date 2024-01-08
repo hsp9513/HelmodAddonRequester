@@ -1,6 +1,13 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.0.2
+Date: 2024-01-08
+  Changes:
+    - Fixed bug that occurred when the item name and entity name were different
+    - If the personal roboport is activated, it will be temporarily disabled.
+
+---------------------------------------------------------------------------------------------------
 Version: 0.0.1
-Date: 2023-12-12
+Date: 2023-12-11
   Changes:
     - First version
 
